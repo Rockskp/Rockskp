@@ -1,0 +1,18 @@
+numpy>=2.0
+pandas>=2.2
+scipy>=1.11
+scikit-learn>=1.4
+matplotlib>=3.8
+jupyter
+nbformat
+nbclient
+pyarrow
+openpyxl
+plotly
+# optional
+torch
+xgboost
+lightgbm
+optuna
+shap
+imbalanced-learn
