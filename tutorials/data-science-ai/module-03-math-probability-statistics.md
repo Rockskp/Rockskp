@@ -1,0 +1,706 @@
+# Module 3 — Mathematics, Probability and Statistics for AI
+### मॉड्यूल 3 — AI के लिए Mathematics, Probability और Statistics
+
+> **Phase 1 · Foundations** · NumPy + SciPy · Real data: Palmer Penguins (344 rows), Titanic.
+> Rule of this module: every formula is computed by hand in NumPy *and* checked against a library.
+
+## 0. Module map
+
+| # | Lesson | Outcome |
+|---|---|---|
+| 3.1 | Numbers, powers, roots, logarithms, functions, Σ notation | Read any ML formula aloud and compute it |
+| 3.2 | Vectors, magnitude, dot product, cosine similarity, embeddings | Build a "most similar penguin" search |
+| 3.3 | Matrices, multiplication, transpose, inverse, rank, determinant, projections, eigen/SVD | Explain what PCA and least squares actually do |
+| 3.4 | Limits, derivatives, partial derivatives, chain rule, gradients | Compute a gradient by hand and verify numerically |
+| 3.5 | Gradient descent, learning rate, local minima/saddles, SGD/Momentum/RMSProp/Adam/AdamW | Implement all optimizers from scratch |
+| 3.6 | Probability, Bayes, random variables, distributions, sampling, CLT | Update beliefs with Bayes on real data |
+| 3.7 | Mean/variance/covariance/correlation, confidence intervals, hypothesis tests (t, χ², ANOVA), p-values, permutation tests | Decide whether a difference is real |
+| 3.8 | MLE, MAP, Bayesian inference, entropy, cross-entropy, KL divergence | Derive why classifiers use cross-entropy |
+| ★ | Mini-project: linear regression derived, then descended | Closed form vs gradient descent on penguins, matching to 4 decimals |
+
+```mermaid
+flowchart LR
+    A[Numbers, logs, Σ] --> V[Vectors] --> M[Matrices] --> E[Eigen / SVD → PCA]
+    A --> C[Derivatives] --> G[Gradients] --> GD[Gradient descent + Adam]
+    V --> COS[Cosine similarity → embeddings / RAG]
+    P[Probability] --> B[Bayes] --> MAP[MLE / MAP]
+    P --> S[Sampling + CLT] --> HT[CIs + hypothesis tests]
+    MAP --> CE[Cross-entropy / KL] --> GD
+    M --> LR[Linear regression]
+    GD --> LR
+```
+
+```python
+from pathlib import Path
+import numpy as np, pandas as pd
+
+def find_data() -> Path:
+    for p in [Path.cwd(), *Path.cwd().parents]:
+        for c in (p / "datasets", p / "tutorials" / "data-science-ai" / "datasets"):
+            if (c / "titanic.csv").exists():
+                return c
+    raise FileNotFoundError("Set DATA = Path('<path>/datasets')")
+
+DATA = find_data()
+peng = pd.read_csv(DATA / "penguins.csv").dropna().reset_index(drop=True)
+NUM = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm", "body_mass_g"]
+rng = np.random.default_rng(42)
+print(peng.shape, peng["species"].value_counts().to_dict())
+```
+
+---
+
+## Lesson 3.1 — Numbers, powers, logs, functions and Σ
+### पाठ 3.1 — Numbers, powers, logarithms, functions और Σ (sigma)
+
+**a. Concept (EN).** ML formulas are built from a handful of operations. *Powers* (xⁿ) and *roots* (x^(1/n)) scale things; **logarithms** turn multiplication into addition (log ab = log a + log b) — that's why we maximise *log*-likelihood (products of thousands of tiny probabilities underflow to 0). **exp** is log's inverse and appears in softmax and sigmoid. A **function** maps inputs to outputs; its *graph* shows its shape (linear, convex, saturating). **Σ notation**: Σᵢ₌₁ⁿ xᵢ is just a `for` loop that adds; Π is a loop that multiplies. Percent change = (new − old)/old.
+
+**a. Concept (HI).** ML के formulas कुछ ही operations से बनते हैं। Log गुणा को जोड़ में बदल देता है — इसलिए हज़ारों छोटी probabilities को गुणा करने की जगह उनके log जोड़ते हैं, वरना number 0 हो जाता है (underflow)। `exp` log का उल्टा है — softmax और sigmoid में आता है। Σ बस एक `for` loop है जो जोड़ता है।
+
+**b. Analogy.** Σ is the cashier adding every item on the bill. Log is the *Richter scale*: an earthquake of 7 is 10× a 6 — huge ranges squeezed into small, addable numbers. Fares on the Titanic range from £0 to £512; log squeezes that so models don't get bullied by a few rich passengers.
+
+**c. Math, worked.** Mean = (1/n) Σ xᵢ. Body mass of first 3 penguins: 3750, 3800, 3250 → Σ = 10 800, mean = 3600 g.
+Underflow: 0.01³⁰⁰ = 10⁻⁶⁰⁰ → 0 in float64 (min ≈ 10⁻³⁰⁸), but Σ log = 300 · log(0.01) = −1381.6 — perfectly representable.
+
+```python
+x = peng["body_mass_g"].to_numpy(float)
+manual_sum = 0.0
+for xi in x:                       # Σ as a loop
+    manual_sum += xi
+print("Σ loop:", manual_sum, "| np.sum:", x.sum(), "| mean:", round(manual_sum / len(x), 2))
+
+p = np.full(300, 0.01)
+print("product:", np.prod(p), "| sum of logs:", np.log(p).sum())   # underflow vs stable
+
+fare = pd.read_csv(DATA / "titanic.csv")["fare"].to_numpy()
+print("fare range:", fare.min(), fare.max(), "| log1p range:", np.log1p(fare).min().round(2), np.log1p(fare).max().round(2))
+print("percent change Adelie→Gentoo mean mass:",
+      f"{(peng[peng.species=='Gentoo'].body_mass_g.mean() / peng[peng.species=='Adelie'].body_mass_g.mean() - 1):.1%}")
+```
+
+*Hindi summary:* Σ को loop से और `np.sum` से निकाला; 300 छोटी probabilities का गुणा 0 हो गया पर log का जोड़ ठीक रहा; `log1p` ने fare की बड़ी range को छोटा किया।
+
+**e. Traps.** `np.log(0)` = −inf → use `log1p` or add ε. Natural log (ln) is the ML default; log₂ appears in entropy "bits". Percent vs percentage points (40%→50% is +10 pp, +25%).
+
+**f. Memory.** Mnemonic **"Log = Lazy multiplication"**. **याद रखो:** *"गुणा बड़ा हो तो log लो, जोड़ आसान है।"*
+
+| Q | A |
+|---|---|
+| log(ab)? | log a + log b |
+| Why log-likelihood? | Avoid underflow; sums are easier to differentiate |
+| Σ in code? | a for-loop / `np.sum` |
+| exp(ln x)? | x |
+| 40%→50% is? | +10 pp, +25% relative |
+
+**g. Practice.** (1) Compute geometric mean of flipper lengths via logs. (2) Show log2(8)=3 three ways. (3) Write Π as a loop and as exp(Σ log) for [0.5, 0.2, 0.9].
+
+<details><summary>Solutions / हल</summary>
+
+```python
+f = peng["flipper_length_mm"].to_numpy(float)
+print("1:", np.exp(np.log(f).mean()).round(2))
+print("2:", np.log2(8), np.log(8) / np.log(2), 2**3 == 8)
+v = [0.5, 0.2, 0.9]; prod = 1.0
+for vi in v: prod *= vi
+print("3:", prod, np.exp(np.sum(np.log(v))))
+```
+</details>
+
+**h. Quiz.** 1) ln(e³)? 2) log₁₀(1000)? 3) Why is `np.log(0)` dangerous? 4) Σᵢ₌₁⁴ i? 5) What does log do to a right-skewed variable?
+
+<details><summary>Answers</summary>1) 3. 2) 3. 3) −inf breaks losses → use ε or log1p. 4) 10. 5) Compresses the long right tail, making it more symmetric.</details>
+
+---
+
+## Lesson 3.2 — Vectors, dot product, cosine similarity, embeddings
+### पाठ 3.2 — Vectors, dot product, cosine similarity और embeddings
+
+**a. Concept (EN).** A **vector** is an ordered list of numbers = a point/arrow in n-D space. Each penguin is a 4-D vector (bill length, bill depth, flipper, mass). **Magnitude** ‖v‖ = √Σvᵢ². **Dot product** a·b = Σ aᵢbᵢ = ‖a‖‖b‖cos θ — measures alignment. **Cosine similarity** = a·b / (‖a‖‖b‖) ∈ [−1, 1] ignores length, compares direction. **Embeddings** are learned vectors where *meaning ≈ direction*: similar words/documents/products point the same way. This is the core of semantic search and RAG (Module 13). Always **standardise** features first, or the largest-unit feature (grams) dominates.
+
+**a. Concept (HI).** Vector numbers की क्रमबद्ध list है — हर penguin 4-D space में एक point है। Dot product बताता है दो vectors कितने एक दिशा में हैं। Cosine similarity लंबाई को छोड़कर सिर्फ़ दिशा compare करती है। Embeddings ऐसे vectors हैं जिनमें *मतलब = दिशा* — इसी पर semantic search और RAG चलते हैं। पहले standardise करो, वरना grams वाला feature सब पर हावी हो जाएगा।
+
+**b. Analogy.** Two friends' Zomato order histories as vectors (biryani, dosa, pizza counts). One orders 2× as much, but same taste → cosine ≈ 1. Dot product cares about how much; cosine cares about taste.
+
+**c. Math, worked.** a = (3, 4), b = (4, 3): a·b = 12+12 = 24; ‖a‖ = ‖b‖ = 5; cos = 24/25 = **0.96**. Orthogonal (1,0)·(0,1) = 0 → cos 0.
+
+```python
+a, b = np.array([3., 4.]), np.array([4., 3.])
+cos = a @ b / (np.linalg.norm(a) * np.linalg.norm(b))
+print("dot:", a @ b, "| norms:", np.linalg.norm(a), "| cosine:", cos)
+
+X = peng[NUM].to_numpy(float)
+Z = (X - X.mean(0)) / X.std(0)                         # standardise each feature
+Zn = Z / np.linalg.norm(Z, axis=1, keepdims=True)      # unit vectors
+query = 0                                               # first penguin
+sims = Zn @ Zn[query]                                   # cosine to every penguin at once
+top = np.argsort(-sims)[1:6]
+print("query species:", peng.species[query])
+print(pd.DataFrame({"species": peng.species[top].values, "cosine": sims[top].round(3)}))
+
+raw_n = X / np.linalg.norm(X, axis=1, keepdims=True)    # without standardising: mass dominates
+print("raw-unit cosine range:", (raw_n @ raw_n[0]).min().round(4), "→ almost everything looks identical")
+```
+
+*Hindi summary:* पहले हाथ से cosine 0.96 निकाला। फिर penguins को standardise करके "सबसे मिलते-जुलते penguin" ढूँढे — सब उसी species के निकले। बिना standardise किए सब cosine ≈ 1 — बेकार।
+
+**e. Traps.** Cosine on raw unscaled features. Confusing cosine *similarity* with cosine *distance* (1 − sim). Dot product without normalisation favours long vectors (popular items in recommenders). Interview: *"Why do vector DBs use cosine or inner product?"* — embeddings are trained so direction encodes meaning; normalised inner product = cosine and is fast with ANN indexes.
+
+**f. Memory.** Mnemonic **"Dot = Kitna, Cosine = Kis taraf"** (how much vs which way). **याद रखो:** *"Cosine दिशा देखता है, लंबाई नहीं।"*
+
+| Q | A |
+|---|---|
+| ‖(3,4)‖? | 5 |
+| cos of orthogonal vectors? | 0 |
+| Why standardise before cosine? | Units would dominate |
+| a·b in terms of angle? | ‖a‖‖b‖cosθ |
+| Embedding? | Learned vector where similar meaning ≈ similar direction |
+
+**g. Practice.** (1) Unit vector of (1,2,2). (2) Find the penguin *least* similar to row 0. (3) Average cosine within-species vs across-species — which is higher?
+
+<details><summary>Solutions / हल</summary>
+
+```python
+v = np.array([1., 2., 2.]); print("1:", v / np.linalg.norm(v))
+print("2:", peng.species[np.argmin(Zn @ Zn[0])])
+S = Zn @ Zn.T; sp = peng.species.to_numpy(dtype=object); same = sp[:, None] == sp[None, :]
+print("3: within", S[same].mean().round(3), "across", S[~same].mean().round(3))
+```
+</details>
+
+**h. Quiz.** 1) Range of cosine? 2) a·b if a ⟂ b? 3) Cosine of v and 5v? 4) Which feature dominates unscaled penguin distances? 5) Cosine distance of identical vectors?
+
+<details><summary>Answers</summary>1) [−1,1]. 2) 0. 3) 1. 4) body_mass_g (thousands). 5) 0.</details>
+
+---
+
+## Lesson 3.3 — Matrices, inverse, rank, projections, eigenvalues and SVD
+### पाठ 3.3 — Matrices, inverse, rank, projections, eigen और SVD
+
+**a. Concept (EN).** A **matrix** is a table of numbers = a linear transformation. **A @ B** needs inner dimensions to match: (m×k)(k×n) → (m×n); entry (i,j) = row i · column j. **Transpose** Aᵀ swaps rows/cols. **Inverse** A⁻¹ undoes A (only for square, full-rank, det ≠ 0). **Rank** = number of independent columns; rank-deficient data (duplicate/collinear features) makes XᵀX non-invertible. **Determinant** = volume scaling factor (0 → squashes space flat). **Projection** of y onto the column space of X gives the least-squares fit: ŷ = X(XᵀX)⁻¹Xᵀy. **Eigenvectors** v satisfy Av = λv (directions A only stretches). **SVD** X = UΣVᵀ works for any matrix; the top right-singular vectors are the **principal components** (PCA). LoRA (Module 14) is low-rank matrix factorisation.
+
+**a. Concept (HI).** Matrix एक transformation है — space को घुमाना, खींचना। Multiply तभी होगा जब बीच की dimensions match करें। Inverse transformation को undo करता है, पर तभी जब determinant 0 न हो। Rank = कितने columns सच में अलग जानकारी देते हैं; duplicate features से rank गिरता है और inverse नहीं बनता। Least squares असल में y को X के column space पर projection है। Eigenvector वो दिशा है जिसे matrix सिर्फ़ खींचता है, घुमाता नहीं। SVD हर matrix को तोड़ता है — इसी से PCA बनता है, और LoRA भी low-rank का ही खेल है।
+
+**b. Analogy.** A matrix is a *photocopier with zoom and rotate settings*. Determinant 0 = the copier prints everything onto a line — you can't recover the original (no inverse). SVD = describing a crowd photo by its 2 most important directions (PCA) — "tall-short" and "heavy-light".
+
+**c. Math, worked.** A = [[2,1],[1,3]]: det = 2·3 − 1·1 = 5; A⁻¹ = (1/5)[[3,−1],[−1,2]]. Eigenvalues solve λ² − 5λ + 5 = 0 → λ = (5 ± √5)/2 ≈ 3.618, 1.382 (sum = trace 5, product = det 5 ✓).
+
+```python
+A = np.array([[2., 1.], [1., 3.]])
+print("det:", np.linalg.det(A).round(3), "| inverse:\n", np.linalg.inv(A).round(3))
+w, V = np.linalg.eigh(A)
+print("eigenvalues:", w.round(3), "| check Av=λv:", np.allclose(A @ V[:, 1], w[1] * V[:, 1]))
+
+# Rank deficiency: add a duplicate (collinear) column
+X = peng[NUM].to_numpy(float)
+X_dup = np.column_stack([X, 2 * X[:, 0]])
+print("rank X:", np.linalg.matrix_rank(X), "| rank with duplicate col:", np.linalg.matrix_rank(X_dup), "of", X_dup.shape[1])
+print("cond(XᵀX) duplicate:", f"{np.linalg.cond(X_dup.T @ X_dup):.1e}  (huge → unstable inverse)")
+
+# Projection = least squares: predict mass from flipper (+ intercept)
+Xd = np.column_stack([np.ones(len(peng)), peng.flipper_length_mm])
+y = peng.body_mass_g.to_numpy(float)
+beta = np.linalg.solve(Xd.T @ Xd, Xd.T @ y)             # normal equations (don't invert explicitly)
+resid = y - Xd @ beta
+print("beta:", beta.round(2), "| residual ⟂ columns:", np.allclose(Xd.T @ resid, 0, atol=1e-6))
+
+# PCA via SVD on standardised data
+Z = (X - X.mean(0)) / X.std(0)
+U, S, Vt = np.linalg.svd(Z, full_matrices=False)
+explained = S**2 / (S**2).sum()
+print("explained variance ratio:", explained.round(3))
+pcs = Z @ Vt[:2].T
+print(pd.DataFrame(pcs, columns=["PC1", "PC2"]).groupby(peng.species).mean().round(2))
+```
+
+*Hindi summary:* det, inverse, eigenvalues हाथ वाले जवाब से match हुए। Duplicate column से rank गिरा और condition number बहुत बड़ा — inverse अस्थिर। Least squares में residual X के columns पर perpendicular है (projection)। SVD से PCA: पहला component ~69% variance समझाता है और Gentoo को अलग कर देता है।
+
+**e. Traps.** Using `inv(XᵀX)` instead of `solve`/`lstsq` (numerically worse). Forgetting to centre data before PCA. `A * B` (element-wise) vs `A @ B` (matrix product). Interview: *"What happens with perfectly collinear features in linear regression?"* — XᵀX singular, coefficients not unique; use regularisation (ridge) or drop a column.
+
+**f. Memory.** Mnemonic **"Inner must match, outer is the shape."** **याद रखो:** *"det शून्य = जानकारी चपटी, inverse नहीं।"*
+
+| Q | A |
+|---|---|
+| Shape of (3×4)@(4×2)? | 3×2 |
+| When is A invertible? | Square, full rank, det ≠ 0 |
+| Eigenvector definition? | Av = λv |
+| PCA directions come from? | Right singular vectors (Vᵀ rows) of centred X |
+| Least squares geometric meaning? | Projection of y onto col-space of X |
+
+**g. Practice.** (1) Verify AA⁻¹ = I. (2) How many PCs explain ≥ 95% variance? (3) Reconstruct Z from the top-2 PCs and compute reconstruction error.
+
+<details><summary>Solutions / हल</summary>
+
+```python
+print("1:", np.allclose(A @ np.linalg.inv(A), np.eye(2)))
+print("2:", int(np.searchsorted(np.cumsum(explained), 0.95) + 1), "components")
+Z2 = U[:, :2] * S[:2] @ Vt[:2]
+print("3: relative error", (np.linalg.norm(Z - Z2) / np.linalg.norm(Z)).round(3),
+      "= sqrt of unexplained var", np.sqrt(explained[2:].sum()).round(3))
+```
+</details>
+
+**h. Quiz.** 1) (2×3)ᵀ shape? 2) det of [[1,2],[2,4]]? 3) Rank of a matrix with 2 identical columns out of 3 independent ones? 4) Sum of eigenvalues equals? 5) Which decomposition works for any rectangular matrix?
+
+<details><summary>Answers</summary>1) 3×2. 2) 0 (rows collinear). 3) 3−1 = 2 (if the rest are independent). 4) Trace. 5) SVD.</details>
+
+---
+
+## Lesson 3.4 — Limits, derivatives, partial derivatives, chain rule, gradients
+### पाठ 3.4 — Limits, derivatives, partial derivatives, chain rule और gradients
+
+**a. Concept (EN).** The **derivative** f′(x) = lim_{h→0} (f(x+h) − f(x))/h is the slope — how much output changes per tiny input change. Rules: (xⁿ)′ = nxⁿ⁻¹, (eˣ)′ = eˣ, (ln x)′ = 1/x, sum rule, product rule. **Partial derivative** ∂f/∂w: slope along one variable holding others fixed. The **gradient** ∇f = vector of all partials; it points uphill (steepest ascent), so −∇f points downhill → learning. **Chain rule**: if L = f(g(w)), dL/dw = f′(g(w))·g′(w) — backpropagation (Module 10) is the chain rule applied layer by layer. Always **verify gradients numerically** with central differences: (f(x+h) − f(x−h))/2h.
+
+**a. Concept (HI).** Derivative = ढलान — input थोड़ा बदला तो output कितना बदला। Partial derivative = बाकी variables को स्थिर रखकर एक की ढलान। Gradient = सारी partials का vector, जो ऊपर की ओर इशारा करता है; इसलिए हम उल्टी दिशा (−gradient) में चलते हैं — यही learning है। Chain rule = अंदर की derivative × बाहर की derivative; backpropagation यही है। हमेशा numerical gradient से अपना हाथ का gradient check करो।
+
+**b. Analogy.** You're blindfolded on a hill in Shimla. Tap your foot in each direction (partial derivatives) — the steepest-up direction is the gradient. To reach the valley (minimum loss), step the opposite way. Chain rule = *gear train*: if gear A turns 3× gear B and B turns 2× gear C, A turns 6× C.
+
+**c. Math, worked.** Loss for one penguin with model ŷ = w·x, L = (w·x − y)². dL/dw = 2(w·x − y)·x (chain rule: outer 2u, inner x). With x = 2.0 (flipper in dm), y = 4.0 (mass in kg), w = 1.5: ŷ = 3, error = −1, dL/dw = 2·(−1)·2 = **−4** → increase w.
+
+```python
+def f(x): return x**3
+h = 1e-5
+for x0 in (1.0, 2.0):
+    numeric = (f(x0 + h) - f(x0 - h)) / (2 * h)
+    print(f"f'({x0}) numeric={numeric:.5f}  analytic={3*x0**2}")
+
+# Limit game: (sin x)/x → 1 as x → 0
+for x0 in (1, 0.1, 0.01, 0.001):
+    print(f"x={x0:<6} sin(x)/x={np.sin(x0)/x0:.6f}")
+
+# Gradient of MSE for y ≈ w*x + b on real penguins (x in dm, y in kg to keep numbers friendly)
+x = peng.flipper_length_mm.to_numpy() / 100
+y = peng.body_mass_g.to_numpy() / 1000
+def loss(w, b): return np.mean((w * x + b - y) ** 2)
+def grad(w, b):
+    err = w * x + b - y
+    return np.array([2 * np.mean(err * x), 2 * np.mean(err)])   # [∂L/∂w, ∂L/∂b] via chain rule
+w0, b0 = 1.5, 0.0
+num = np.array([(loss(w0 + h, b0) - loss(w0 - h, b0)) / (2*h), (loss(w0, b0 + h) - loss(w0, b0 - h)) / (2*h)])
+print("analytic grad:", grad(w0, b0).round(5), "| numeric:", num.round(5))
+
+# Worked single-example check
+xi, yi, w = 2.0, 4.0, 1.5
+print("dL/dw single example:", 2 * (w * xi - yi) * xi)
+```
+
+*Hindi summary:* x³ की derivative numerical और formula दोनों से 3x² आई। sin(x)/x का limit 1 दिखा। Penguin data पर MSE का gradient chain rule से निकाला और numerical gradient से match किया — यही "gradient checking" है।
+
+**e. Traps.** Forgetting the inner derivative in the chain rule. Using a too-small h (1e-12) → floating-point noise. Sign errors: gradient is *uphill*. Interview: *"Why central differences instead of forward?"* Error O(h²) vs O(h).
+
+**f. Memory.** Mnemonic **"Bahar × Andar"** (outer × inner) for the chain rule. **याद रखो:** *"Gradient पहाड़ ऊपर दिखाता है — learning नीचे उतरती है।"*
+
+| Q | A |
+|---|---|
+| (x⁴)′? | 4x³ |
+| Gradient points? | Steepest ascent |
+| Chain rule for f(g(x))? | f′(g(x))·g′(x) |
+| Numerical gradient formula? | (f(x+h)−f(x−h))/2h |
+| ∂/∂w of (wx−y)²? | 2(wx−y)x |
+
+**g. Practice.** (1) Derivative of σ(z) = 1/(1+e⁻ᶻ) numerically at 0 (should be 0.25). (2) ∂/∂b of the penguin loss at w=0,b=0. (3) Write `numeric_grad(f, params)` for any vector of parameters.
+
+<details><summary>Solutions / हल</summary>
+
+```python
+sig = lambda z: 1 / (1 + np.exp(-z))
+print("1:", round((sig(h) - sig(-h)) / (2 * h), 5))
+print("2:", grad(0.0, 0.0)[1].round(4), "= -2*mean(y)", (-2 * y.mean()).round(4))
+def numeric_grad(fn, p, h=1e-5):
+    g = np.zeros_like(p)
+    for i in range(len(p)):
+        e = np.zeros_like(p); e[i] = h
+        g[i] = (fn(p + e) - fn(p - e)) / (2 * h)
+    return g
+print("3:", numeric_grad(lambda p: loss(*p), np.array([1.5, 0.0])).round(5))
+```
+</details>
+
+**h. Quiz.** 1) d/dx eˣ? 2) d/dx ln x? 3) If dL/dw < 0, should w increase or decrease? 4) What is backprop? 5) Gradient of f(w₁,w₂)=w₁²+3w₂?
+
+<details><summary>Answers</summary>1) eˣ. 2) 1/x. 3) Increase (move opposite the gradient). 4) Chain rule applied efficiently backward through a computation graph. 5) (2w₁, 3).</details>
+
+---
+
+## Lesson 3.5 — Gradient descent and optimizers (SGD, Momentum, RMSProp, Adam, AdamW)
+### पाठ 3.5 — Gradient descent और optimizers
+
+**a. Concept (EN).** **Gradient descent**: θ ← θ − η ∇L(θ), η = learning rate. Too small η → slow; too big → oscillates/diverges. **SGD/mini-batch**: estimate ∇L on a batch — noisy but cheap, and noise helps escape **saddle points** (flat in some directions, which dominate in high-D) and sharp minima. **Momentum**: v ← βv + ∇L; θ ← θ − ηv (a rolling ball; smooths zig-zags). **RMSProp**: divide by a running RMS of gradients → per-parameter step sizes. **Adam** = momentum (1st moment m) + RMSProp (2nd moment v) + bias correction; defaults β₁=0.9, β₂=0.999, ε=1e-8. **AdamW** decouples weight decay: θ ← θ − η(m̂/(√v̂+ε) + λθ) — the standard for Transformers. Feature scaling matters: badly scaled features create elongated valleys where GD zig-zags.
+
+**a. Concept (HI).** Gradient descent: हर step पर gradient की उल्टी दिशा में थोड़ा (learning rate जितना) चलो। Learning rate छोटा = धीमा, बड़ा = उछलता या फट जाता है। Mini-batch SGD noisy है पर सस्ता, और noise saddle points से निकलने में मदद करता है। Momentum = लुढ़कती गेंद, zig-zag कम। RMSProp हर parameter का अपना step size देता है। Adam = दोनों का मेल। AdamW में weight decay अलग से लगता है — Transformers का standard।
+
+**b. Analogy.** Descending a ghat road in fog: GD = careful steps; momentum = a cycle that keeps rolling through small bumps; RMSProp = automatically braking on steep bits; Adam = cycle with ABS brakes. Learning rate = how big each pedal push is.
+
+**c. Math, worked.** f(θ) = θ², ∇ = 2θ, θ₀ = 5, η = 0.1: θ₁ = 5 − 0.1·10 = 4.0, θ₂ = 3.2 (each step ×0.8). With η = 1.1: θ₁ = 5 − 11 = −6 → |θ| grows ×1.2 each step → **diverges**. Condition: for θ², converge iff 0 < η < 1.
+
+```python
+def run(eta, steps=6, theta=5.0):
+    out = [theta]
+    for _ in range(steps):
+        theta -= eta * 2 * theta; out.append(round(theta, 3))
+    return out
+print("η=0.1:", run(0.1)); print("η=1.1:", run(1.1))
+
+# Elongated valley (like unscaled features): f = 0.5*(x² + 25 y²); also has easy-to-see optimizer differences
+A = np.array([1.0, 25.0])
+fval = lambda p: 0.5 * np.sum(A * p**2)
+g = lambda p: A * p
+
+def optimize(name, lr, steps=100):
+    p = np.array([-4.0, 1.5]); m = np.zeros(2); v = np.zeros(2)
+    b1, b2, eps, wd = 0.9, 0.999, 1e-8, 0.01
+    for t in range(1, steps + 1):
+        gr = g(p)
+        if name == "sgd":
+            p = p - lr * gr
+        elif name == "momentum":
+            m = 0.9 * m + gr; p = p - lr * m
+        elif name == "rmsprop":
+            v = 0.9 * v + 0.1 * gr**2; p = p - lr * gr / (np.sqrt(v) + eps)
+        elif name in ("adam", "adamw"):
+            m = b1 * m + (1 - b1) * gr; v = b2 * v + (1 - b2) * gr**2
+            mh, vh = m / (1 - b1**t), v / (1 - b2**t)
+            p = p - lr * (mh / (np.sqrt(vh) + eps) + (wd * p if name == "adamw" else 0))
+    return fval(p)
+
+for name, lr in [("sgd", 0.07), ("momentum", 0.03), ("rmsprop", 0.05), ("adam", 0.2), ("adamw", 0.2)]:
+    print(f"{name:9s} lr={lr:<5} loss after 100 steps = {optimize(name, lr):.2e}")
+print("sgd lr=0.09 (too big for the steep axis, 25*0.09>2):", f"{optimize('sgd', 0.09):.2e}")
+```
+
+*Hindi summary:* θ² पर η = 0.1 से value घटती गई, η = 1.1 से फट गई। लंबी-पतली घाटी (unscaled features जैसी) पर पाँचों optimizers खुद लिखे — SGD का lr steep दिशा तय करती है; ज़्यादा lr पर diverge।
+
+**e. Traps.** Not shuffling data between epochs. Using the same η after switching SGD → Adam (Adam's typical η ≈ 1e-3). Adam with L2 in the loss ≠ AdamW. Interview: *"Why do saddle points matter more than local minima in deep nets?"* In high dimensions, most zero-gradient points are saddles; noise + momentum escape them.
+
+**f. Memory.** Mnemonic **"S-M-R-A-W: Sab Mil ke Rasta AasaanWare"** (SGD → Momentum → RMSProp → Adam → AdamW). **याद रखो:** *"Learning rate सबसे ज़रूरी hyperparameter है — पहले उसे tune करो।"*
+
+| Q | A |
+|---|---|
+| GD update? | θ ← θ − η∇L |
+| Momentum's job? | Accumulate velocity, damp zig-zags |
+| Adam = ? | Momentum + RMSProp + bias correction |
+| AdamW difference? | Decoupled weight decay |
+| Converge condition on θ²? | 0 < η < 1 |
+
+**g. Practice.** (1) Find the largest η that converges for f = 0.5·25·y² (hint: 2/25). (2) Print Adam's bias-correction factor 1/(1−β₁ᵗ) for t = 1, 10, 100. (3) Implement learning-rate decay ηₜ = η₀/(1+0.01t) for SGD on the valley and compare.
+
+<details><summary>Solutions / हल</summary>
+
+```python
+print("1: max eta =", 2 / 25)
+print("2:", [round(1 / (1 - 0.9**t), 3) for t in (1, 10, 100)])
+p = np.array([-4.0, 1.5])
+for t in range(100):
+    p = p - (0.07 / (1 + 0.01 * t)) * g(p)
+print("3: decayed SGD loss", f"{fval(p):.2e}", "vs constant", f"{optimize('sgd', 0.07):.2e}")
+```
+</details>
+
+**h. Quiz.** 1) Default Adam β₂? 2) What does a loss curve that explodes indicate? 3) Mini-batch gradients are (biased/unbiased) estimates of the full gradient? 4) Why scale features before GD? 5) Which optimizer is the default for fine-tuning Transformers?
+
+<details><summary>Answers</summary>1) 0.999. 2) Learning rate too high (or a bug/NaN). 3) Unbiased (with random sampling), but noisy. 4) Round loss contours → straight path, one η fits all directions. 5) AdamW.</details>
+
+---
+
+## Lesson 3.6 — Probability, Bayes, distributions, sampling and the CLT
+### पाठ 3.6 — Probability, Bayes, distributions, sampling और CLT
+
+**a. Concept (EN).** P(A) ∈ [0,1]; P(A∪B) = P(A)+P(B)−P(A∩B); **conditional** P(A|B) = P(A∩B)/P(B). **Bayes**: P(H|D) = P(D|H)·P(H)/P(D) — posterior ∝ likelihood × prior. A **random variable** maps outcomes to numbers; key distributions: **Bernoulli** (one yes/no, p), **Binomial** (k successes in n), **Poisson** (counts per interval, λ), **Normal** N(μ,σ²), **Uniform**, **Exponential** (waiting times). **Expectation** E[X] = Σx·P(x). **Sampling**: estimates from a sample vary; the **Central Limit Theorem** says the mean of n i.i.d. samples ≈ Normal(μ, σ²/n) for large n, regardless of the original shape — the basis of confidence intervals and A/B tests. Standard error = σ/√n.
+
+**a. Concept (HI).** Conditional probability = "B हुआ है, तो A की संभावना"। Bayes = पुराना विश्वास (prior) × नया सबूत (likelihood) → नया विश्वास (posterior)। Bernoulli = एक हाँ/ना, Binomial = n में से k, Poisson = समय में गिनती, Normal = घंटी जैसा curve। CLT कहता है — data का shape कुछ भी हो, बहुत सारे samples का *mean* लगभग Normal होता है; spread σ/√n घटता है। यही confidence interval और A/B test का आधार है।
+
+**b. Analogy.** Bayes is a doctor: prior = how common the disease is in the town; likelihood = how often the test is positive if you have it; posterior = your actual risk given a positive test — usually much lower than people think when the disease is rare. CLT = averaging many noisy street-food ratings gives a stable, bell-shaped "true" rating.
+
+**c. Math, worked (penguins).** P(Gentoo) = 119/333 = 0.357. P(flipper > 210 | Gentoo) is high (≈ 0.80), P(flipper > 210 | not Gentoo) tiny. Bayes: P(Gentoo | flipper > 210) = P(F|G)P(G)/P(F). Code computes the exact numbers.
+Disease example: prevalence 1%, sensitivity 99%, false-positive 5% → P(D|+) = 0.99·0.01 / (0.99·0.01 + 0.05·0.99) = **0.167**.
+
+```python
+G = peng.species == "Gentoo"; F = peng.flipper_length_mm > 210
+pG, pF = G.mean(), F.mean(); pF_G = F[G].mean()
+print(f"P(G)={pG:.3f}  P(F|G)={pF_G:.3f}  P(F)={pF:.3f}")
+print(f"Bayes P(G|F) = {pF_G * pG / pF:.3f} | direct count: {G[F].mean():.3f}")
+
+prev, sens, fpr = 0.01, 0.99, 0.05
+print("disease P(D|+):", round(sens * prev / (sens * prev + fpr * (1 - prev)), 3))
+
+# Distributions with numpy's Generator
+print("Binomial(n=10,p=0.38) mean≈", rng.binomial(10, 0.38, 100_000).mean().round(3), "(theory 3.8)")
+print("Poisson(λ=3) var≈", rng.poisson(3, 100_000).var().round(3), "(theory 3)")
+
+# CLT on a skewed variable: Titanic fares
+fare = pd.read_csv(DATA / "titanic.csv")["fare"].to_numpy()
+for n in (2, 30, 200):
+    means = rng.choice(fare, size=(5000, n)).mean(axis=1)
+    skew = ((means - means.mean())**3).mean() / means.std()**3
+    print(f"n={n:3d}: sd of means={means.std():6.2f} (σ/√n={fare.std()/np.sqrt(n):6.2f}), skew={skew:5.2f}")
+```
+
+*Hindi summary:* Bayes से P(Gentoo | flipper > 210) निकाला और सीधी गिनती से match किया। बीमारी वाले उदाहरण में positive test पर भी असली जोखिम सिर्फ़ 16.7%। Fare बहुत skewed है, फिर भी sample size बढ़ने पर means का spread σ/√n जैसा घटता है और skew शून्य की ओर — यही CLT।
+
+**e. Traps.** Confusing P(A|B) with P(B|A) (prosecutor's fallacy). Ignoring the base rate. Assuming independence when it's not (Naive Bayes "naive"). CLT needs finite variance and independence — not "every dataset is normal". Interview: *"Why √n?"* Var of mean = σ²/n for independent samples.
+
+**f. Memory.** Mnemonic **"Posterior = Pehle ka vishwas × Pakka saboot"**. **याद रखो:** *"Base rate भूले तो Bayes रूठे।"*
+
+| Q | A |
+|---|---|
+| Bayes formula? | P(H|D) = P(D|H)P(H)/P(D) |
+| Standard error of mean? | σ/√n |
+| Distribution of counts per hour? | Poisson |
+| CLT says? | Sample mean ≈ Normal for large n |
+| Mean of Binomial(n,p)? | np |
+
+**g. Practice.** (1) P(survived | female) and P(female | survived) on Titanic — why different? (2) Simulate 10 000 rolls of two dice, P(sum=7) (theory 1/6). (3) How large n is needed so SE of mean fare < £2?
+
+<details><summary>Solutions / हल</summary>
+
+```python
+t = pd.read_csv(DATA / "titanic.csv")
+print("1:", round(t[t.sex == "female"].survived.mean(), 3), round((t[t.survived == 1].sex == "female").mean(), 3),
+      "- different denominators")
+d = rng.integers(1, 7, (10_000, 2)).sum(1); print("2:", (d == 7).mean().round(3))
+print("3: n >", int(np.ceil((fare.std() / 2) ** 2)))
+```
+</details>
+
+**h. Quiz.** 1) P(A|B) when A, B independent? 2) Prior 50%, likelihood ratio 4:1 → posterior? 3) Which distribution models one coin flip? 4) Quadrupling n changes SE by? 5) Does CLT make individual fares normal?
+
+<details><summary>Answers</summary>1) P(A). 2) odds 1:1×4 = 4:1 → 80%. 3) Bernoulli. 4) Halves it. 5) No — only the distribution of sample means.</details>
+
+---
+
+## Lesson 3.7 — Descriptive stats, confidence intervals and hypothesis tests
+### पाठ 3.7 — Descriptive statistics, confidence intervals और hypothesis testing
+
+**a. Concept (EN).** **Mean** (sensitive to outliers) vs **median** (robust). **Variance** = mean squared deviation; use n−1 (Bessel) for sample variance. **Covariance** = E[(X−μx)(Y−μy)]; **Pearson correlation** r = cov/(σxσy) ∈ [−1,1] (linear only; correlation ≠ causation). **Confidence interval** (95%): x̄ ± t·s/√n — if we repeated the study many times, ~95% of such intervals contain the true mean. **Hypothesis test**: H₀ (no effect) vs H₁; the **p-value** = P(data this extreme | H₀). Small p (< α=0.05) → reject H₀. It is *not* P(H₀ is true). Tests: **t-test** (compare 2 means), **χ² test** (independence of categorical variables), **ANOVA** (≥3 means), **permutation test** (assumption-light: shuffle labels). Always report **effect size** + CI, not just p.
+
+**a. Concept (HI).** Mean outliers से हिलता है, median नहीं। Variance = फैलाव, correlation = दो चीज़ें साथ-साथ कितनी linearly बदलती हैं (पर correlation का मतलब cause नहीं)। 95% CI = वो range जो इस तरीके से बनाओ तो 95% बार असली mean पकड़ ले। p-value = "अगर कोई असर नहीं है (H₀), तो इतना extreme data दिखने की संभावना"। p-value H₀ के सच होने की probability नहीं है! दो groups → t-test, categories → χ², तीन या ज़्यादा groups → ANOVA, assumptions कम चाहिए → permutation test। हमेशा effect size भी बताओ।
+
+**b. Analogy.** A court case: H₀ = "innocent". The p-value is "how surprising is this evidence if innocent?" Very surprising → convict (reject H₀). But "not guilty" ≠ "proven innocent" — failing to reject H₀ doesn't prove no effect. The permutation test = shuffling name tags at random and asking "do random groups ever look this different?"
+
+**c. Math, worked.** Male vs female Adelie body mass: Welch t = (x̄₁ − x̄₂)/√(s₁²/n₁ + s₂²/n₂). The code computes it by hand and with SciPy.
+
+```python
+from scipy import stats
+
+ad = peng[peng.species == "Adelie"]
+m, f = ad[ad.sex == "MALE"].body_mass_g.to_numpy(), ad[ad.sex == "FEMALE"].body_mass_g.to_numpy()
+t_hand = (m.mean() - f.mean()) / np.sqrt(m.var(ddof=1) / len(m) + f.var(ddof=1) / len(f))
+t_sp, p_sp = stats.ttest_ind(m, f, equal_var=False)
+print(f"diff={m.mean()-f.mean():.0f} g  t_hand={t_hand:.3f}  t_scipy={t_sp:.3f}  p={p_sp:.2e}")
+
+# 95% CI for male Adelie mean mass
+se = m.std(ddof=1) / np.sqrt(len(m)); tcrit = stats.t.ppf(0.975, len(m) - 1)
+print(f"95% CI male mass: [{m.mean()-tcrit*se:.0f}, {m.mean()+tcrit*se:.0f}] g")
+
+# Coverage experiment: 200 intervals from a known population (true mean known)
+pop = peng.body_mass_g.to_numpy(); mu = pop.mean(); hits = 0
+for _ in range(200):
+    s = rng.choice(pop, 30); h = stats.t.ppf(0.975, 29) * s.std(ddof=1) / np.sqrt(30)
+    hits += (s.mean() - h <= mu <= s.mean() + h)
+print("CI coverage over 200 intervals:", hits / 200)
+
+# Permutation test: shuffle sex labels
+obs = m.mean() - f.mean(); both = np.concatenate([m, f]); cnt = 0
+for _ in range(5000):
+    rng.shuffle(both); cnt += abs(both[:len(m)].mean() - both[len(m):].mean()) >= abs(obs)
+print("permutation p ≈", (cnt + 1) / 5001)
+
+# Correlation, χ² and ANOVA
+print("corr(flipper, mass) =", np.corrcoef(peng.flipper_length_mm, peng.body_mass_g)[0, 1].round(3))
+tab = pd.crosstab(peng.species, peng.island); chi2, p_chi, dof, _ = stats.chi2_contingency(tab)
+print(f"χ² species×island = {chi2:.1f}, dof={dof}, p={p_chi:.1e}")
+F_, p_an = stats.f_oneway(*[g.flipper_length_mm for _, g in peng.groupby("species")])
+print(f"ANOVA flipper by species F={F_:.1f}, p={p_an:.1e}")
+d = (m.mean() - f.mean()) / np.sqrt((m.var(ddof=1) + f.var(ddof=1)) / 2)
+print("Cohen's d (effect size):", round(d, 2))
+```
+
+*Hindi summary:* Male–female Adelie का फ़र्क t-test (हाथ से और SciPy से), CI, permutation test — सब कहते हैं फ़र्क असली है। 200 intervals में ~95% ने असली mean पकड़ा — CI का सही मतलब। χ² से species और island जुड़े, ANOVA से flipper species पर निर्भर। Cohen's d से असर कितना बड़ा है।
+
+**e. Traps.** "p = 0.03 means 97% chance the effect is real" — wrong. p-hacking: testing 20 metrics → one is "significant" by chance (use Bonferroni/FDR). Statistical vs practical significance (huge n makes tiny effects significant). Pearson misses non-linear relations. Interview: *"When would you use a permutation test?"* Small samples, unknown distributions, custom statistics (e.g., difference in medians).
+
+**f. Memory.** Mnemonic **"t for Two, χ² for Categories, ANOVA for Aneka (many)."** **याद रखो:** *"p-value सबूत की हैरानी है, सच की probability नहीं।"*
+
+| Q | A |
+|---|---|
+| p-value definition? | P(data at least this extreme | H₀) |
+| Test for 3 group means? | ANOVA |
+| Test for two categorical variables? | χ² independence |
+| 95% CI meaning? | Method captures true value 95% of the time |
+| Effect size for 2 means? | Cohen's d |
+
+**g. Practice.** (1) Median vs mean fare — which is bigger and why? (2) Is there a significant survival difference between Titanic sexes (χ²)? (3) Spearman vs Pearson for bill length vs bill depth over *all* species — explain the sign (Simpson's paradox).
+
+<details><summary>Solutions / हल</summary>
+
+```python
+print("1: mean", fare.mean().round(2), "median", np.median(fare), "- right skew pulls the mean up")
+t = pd.read_csv(DATA / "titanic.csv")
+print("2: p =", f"{stats.chi2_contingency(pd.crosstab(t.sex, t.survived))[1]:.1e}")
+print("3: overall r =", peng[["bill_length_mm", "bill_depth_mm"]].corr().iloc[0, 1].round(3),
+      "| within species:", peng.groupby("species")[["bill_length_mm", "bill_depth_mm"]]
+      .apply(lambda g: g.corr().iloc[0, 1]).round(2).to_dict(), "→ Simpson's paradox")
+```
+</details>
+
+**h. Quiz.** 1) Is median or mean robust to outliers? 2) p = 0.2 means we (accept / fail to reject) H₀? 3) Why ddof=1? 4) Correlation r = 0 implies independence? 5) 20 tests at α=0.05, expected false positives?
+
+<details><summary>Answers</summary>1) Median. 2) Fail to reject. 3) Unbiased sample variance (Bessel). 4) No — only no linear relation. 5) 1.</details>
+
+---
+
+## Lesson 3.8 — MLE, MAP, Bayesian inference, entropy, cross-entropy, KL
+### पाठ 3.8 — MLE, MAP, Bayesian inference, entropy, cross-entropy और KL divergence
+
+**a. Concept (EN).** **Maximum Likelihood (MLE)**: choose parameters θ maximising P(data | θ) = Π P(xᵢ|θ) → maximise Σ log P(xᵢ|θ). For a Normal, MLE μ = sample mean; for a coin, p̂ = k/n. **MAP** adds a prior: maximise log P(data|θ) + log P(θ) — a Gaussian prior on weights = **L2 regularisation (ridge)**, a Laplace prior = **L1 (lasso)**. **Bayesian inference** keeps the whole posterior distribution (e.g., Beta-Binomial). **Entropy** H(p) = −Σ p log p = average surprise (uncertainty). **Cross-entropy** H(p,q) = −Σ p log q = cost of coding true p with model q; with one-hot labels it's −log q(correct class) — the classification loss. **KL divergence** KL(p‖q) = H(p,q) − H(p) ≥ 0, = 0 iff p = q; not symmetric. Minimising cross-entropy = maximising likelihood = minimising KL to the data distribution.
+
+**a. Concept (HI).** MLE: वो parameters चुनो जिनसे देखा गया data सबसे ज़्यादा संभावित लगे। MAP: उसमें prior भी जोड़ो — Gaussian prior = L2 regularisation, Laplace prior = L1। Entropy = अनिश्चितता / औसत हैरानी। Cross-entropy = सही जवाब पर model ने जो probability दी उसका −log — classification का loss यही है। KL divergence = दो distributions की दूरी (पर symmetric नहीं)। Cross-entropy घटाना = likelihood बढ़ाना = KL घटाना — तीनों एक ही बात।
+
+**b. Analogy.** MLE = choosing the cricket player's "true" strike rate as exactly what you saw this season. MAP = shrinking it toward the league average if he's only played 3 matches (prior). Entropy = how unpredictable the weather in Mumbai monsoon is; cross-entropy = how surprised your weather app is by actual weather.
+
+**c. Math, worked.** Coin: 7 heads in 10. MLE p̂ = 0.7. With a Beta(2,2) prior, MAP = (7+2−1)/(10+2+2−2) = 8/12 = **0.667** (pulled toward 0.5). Cross-entropy for true class "Gentoo" with prediction q = (0.1, 0.2, 0.7): −ln 0.7 = **0.357**; if q(Gentoo) = 0.05: −ln 0.05 = **3.0** — confident mistakes are punished hard.
+
+```python
+from scipy import stats
+k, n = 7, 10
+grid = np.linspace(0.001, 0.999, 999)
+loglik = k * np.log(grid) + (n - k) * np.log(1 - grid)
+logprior = stats.beta(2, 2).logpdf(grid)
+print("MLE:", grid[np.argmax(loglik)].round(3), "| MAP:", grid[np.argmax(loglik + logprior)].round(3))
+post = stats.beta(2 + k, 2 + n - k)
+print("Bayesian posterior mean:", round(post.mean(), 3), "| 95% credible:", np.round(post.interval(0.95), 3))
+
+# MLE of a Normal on penguin mass equals sample mean and (ddof=0) std
+x = peng.body_mass_g.to_numpy(float)
+mu_hat, sd_hat = stats.norm.fit(x)
+print("norm.fit:", round(mu_hat, 2), round(sd_hat, 2), "| mean/std:", round(x.mean(), 2), round(x.std(), 2))
+
+def entropy(p): p = np.asarray(p, float); p = p[p > 0]; return -(p * np.log2(p)).sum()
+species_p = peng.species.value_counts(normalize=True).to_numpy()
+print("species entropy (bits):", entropy(species_p).round(3), "| max for 3 classes:", np.log2(3).round(3))
+
+def cross_entropy(p, q): return -(np.asarray(p) * np.log(np.asarray(q))).sum()
+y_true = [0, 0, 1]
+for q in ([0.1, 0.2, 0.7], [0.45, 0.5, 0.05]):
+    print(f"CE with q={q}: {cross_entropy(y_true, q):.3f}")
+p, q = np.array([0.5, 0.3, 0.2]), np.array([0.4, 0.4, 0.2])
+kl = lambda a, b: (a * np.log(a / b)).sum()
+print("KL(p||q)=", kl(p, q).round(4), " KL(q||p)=", kl(q, p).round(4), "(not symmetric)",
+      "| scipy:", stats.entropy(p, q).round(4))
+```
+
+*Hindi summary:* 7/10 heads का MLE 0.7, Beta(2,2) prior के साथ MAP 0.667, और Bayesian posterior पूरा distribution देता है। Normal का MLE = sample mean। Species की entropy अधिकतम के क़रीब (classes balanced-ish)। गलत पर confident prediction का cross-entropy loss बहुत बड़ा। KL symmetric नहीं।
+
+**e. Traps.** MAP ≠ full Bayesian (MAP is a point estimate). Taking log of 0 probabilities (clip or use log-softmax). Thinking KL is a distance metric (it isn't symmetric). Interview: *"Why cross-entropy not MSE for classification?"* It's the MLE for a categorical model, gives strong gradients when confidently wrong, and pairs with softmax for a clean gradient (q − y).
+
+**f. Memory.** Mnemonic **"MLE = Mera data, MAP = Mera data + Purana gyaan."** **याद रखो:** *"Confident होकर गलत = cross-entropy की सबसे बड़ी सज़ा।"*
+
+| Q | A |
+|---|---|
+| MLE of coin with k heads in n? | k/n |
+| Gaussian prior on weights equals? | L2 / ridge |
+| Cross-entropy with one-hot y? | −log q(correct) |
+| KL(p‖p)? | 0 |
+| Entropy of a fair coin (bits)? | 1 |
+
+**g. Practice.** (1) Entropy of Titanic survival. (2) Compute softmax of logits [2, 1, 0.1] and its cross-entropy for class 0. (3) Show numerically that CE = H(p) + KL(p‖q) for p, q above.
+
+<details><summary>Solutions / हल</summary>
+
+```python
+t = pd.read_csv(DATA / "titanic.csv")
+print("1:", entropy(t.survived.value_counts(normalize=True)).round(3), "bits")
+z = np.array([2, 1, 0.1]); sm = np.exp(z - z.max()) / np.exp(z - z.max()).sum()
+print("2: softmax", sm.round(3), "CE", (-np.log(sm[0])).round(3))
+H = -(p * np.log(p)).sum(); print("3:", cross_entropy(p, q).round(4), "=", (H + kl(p, q)).round(4))
+```
+</details>
+
+**h. Quiz.** 1) Entropy is maximal when? 2) Laplace prior gives which regularisation? 3) CE when model predicts 1.0 for the correct class? 4) Is KL symmetric? 5) Minimising CE is equivalent to?
+
+<details><summary>Answers</summary>1) Uniform distribution. 2) L1. 3) 0. 4) No. 5) Maximising log-likelihood (MLE).</details>
+
+---
+
+## ★ Mini-project — Linear regression: derived, then descended
+### ★ Mini-project — Linear regression: पहले formula, फिर gradient descent
+
+**Goal:** predict penguin body mass from bill length, bill depth and flipper length. (1) Derive β = (XᵀX)⁻¹Xᵀy; (2) fit by gradient descent on standardised features; (3) show both give the same predictions; (4) report R², RMSE and a bootstrap CI for the flipper coefficient — "the math behind one penguin row".
+
+Derivation: L(β) = (1/n)‖y − Xβ‖². ∇L = −(2/n)Xᵀ(y − Xβ). Setting ∇L = 0 → XᵀXβ = Xᵀy (normal equations).
+
+```python
+feats = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm"]
+Xraw = peng[feats].to_numpy(float); y = peng.body_mass_g.to_numpy(float)
+mu, sd = Xraw.mean(0), Xraw.std(0)
+X = np.column_stack([np.ones(len(y)), (Xraw - mu) / sd])     # intercept + standardised
+
+beta_cf = np.linalg.solve(X.T @ X, X.T @ y)                  # 1) closed form
+
+beta = np.zeros(X.shape[1]); lr = 0.1                        # 2) gradient descent
+for epoch in range(2000):
+    grad = -(2 / len(y)) * X.T @ (y - X @ beta)
+    beta -= lr * grad
+    if np.linalg.norm(grad) < 1e-8:
+        break
+print("closed form:", beta_cf.round(4)); print("grad desc. :", beta.round(4), f"(stopped at epoch {epoch})")
+
+pred = X @ beta                                              # 3) metrics
+rmse = np.sqrt(np.mean((y - pred) ** 2)); r2 = 1 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+print(f"RMSE={rmse:.1f} g  R²={r2:.3f}")
+
+row = peng.iloc[0]                                           # the math behind one penguin row
+z = (row[feats].to_numpy(float) - mu) / sd
+print(f"row 0: { {k: float(row[k]) for k in feats} } → ŷ = {beta[0]:.1f} + " + " + ".join(f"{b:.1f}·{zi:.2f}" for b, zi in zip(beta[1:], z))
+      + f" = {beta[0] + beta[1:] @ z:.0f} g (actual {row.body_mass_g:.0f})")
+
+boots = []                                                   # 4) bootstrap CI for flipper coefficient
+for _ in range(1000):
+    i = rng.integers(0, len(y), len(y))
+    boots.append(np.linalg.lstsq(X[i], y[i], rcond=None)[0][3])
+print("flipper coef (g per 1 SD):", round(beta[3], 1), "95% bootstrap CI:", np.percentile(boots, [2.5, 97.5]).round(1))
+
+from sklearn.linear_model import LinearRegression            # cross-check with scikit-learn
+print("sklearn R²:", round(LinearRegression().fit(Xraw, y).score(Xraw, y), 3))
+```
+
+*Hindi summary:* Normal equations और gradient descent दोनों से एक जैसे coefficients आए (4 decimal तक)। R² ≈ 0.76 और RMSE ≈ 390 g। Row 0 का prediction हाथ से जोड़कर दिखाया, और bootstrap से flipper coefficient की 95% CI निकाली। scikit-learn भी वही R² देता है।
+
+---
+
+## Module 3 cheat sheet
+
+| Concept | Formula | याद रखो |
+|---|---|---|
+| Log trick | log Π = Σ log | गुणा → जोड़ |
+| Cosine | a·b/(‖a‖‖b‖) | दिशा, लंबाई नहीं |
+| Matmul shape | (m×k)(k×n)=(m×n) | inner match |
+| Least squares | XᵀXβ = Xᵀy | projection |
+| PCA | SVD of centred X | सबसे ज़्यादा फैलाव की दिशा |
+| Chain rule | f′(g)·g′ | बाहर × अंदर |
+| GD | θ −= η∇L | ढलान से उल्टा |
+| Adam | m, v, bias-corr | momentum + RMSProp |
+| Bayes | P(D|H)P(H)/P(D) | base rate मत भूलो |
+| SE | σ/√n | 4× data → ½ error |
+| p-value | P(extreme | H₀) | हैरानी, सच नहीं |
+| MLE/MAP | max log-lik (+ log prior) | prior = regularisation |
+| CE / KL | −Σp log q / H(p,q)−H(p) | confident गलत = बड़ी सज़ा |
+
+## Spaced repetition plan
+
+| Review | Task |
+|---|---|
+| Day 1 | 40 flashcards; derive normal equations on paper |
+| Day 3 | Re-implement Adam from memory and test on the valley |
+| Day 7 | All quizzes; redo the Bayes disease example and the Gentoo example |
+| Day 21 | Re-do the mini-project from a blank notebook |
+| Day 60 | Explain p-value, CI and CLT to a friend in Hindi without notes |
+
+## Sources
+
+- NumPy linear algebra: https://numpy.org/doc/stable/reference/routines.linalg.html · random Generator: https://numpy.org/doc/stable/reference/random/generator.html
+- SciPy stats: https://docs.scipy.org/doc/scipy/reference/stats.html
+- *Mathematics for Machine Learning* — Deisenroth, Faisal, Ong (free PDF): https://mml-book.github.io/
+- Kingma & Ba, *Adam*, 2014: https://arxiv.org/abs/1412.6980 · Loshchilov & Hutter, *Decoupled Weight Decay (AdamW)*, 2017: https://arxiv.org/abs/1711.05101
+- Wasserstein & Lazar, *ASA Statement on p-values*, 2016: https://doi.org/10.1080/00031305.2016.1154108
+- Goodfellow, Bengio, Courville, *Deep Learning*, ch. 2–5: https://www.deeplearningbook.org/
+- Palmer Penguins data: Gorman, Williams & Fraser (2014), via https://allisonhorst.github.io/palmerpenguins/
